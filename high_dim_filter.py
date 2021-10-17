@@ -80,9 +80,8 @@ class HighDimFilter:
             self.splat_coords = tf.reshape(self.splat_coords, [-1, ])
 
             # Slice interpolation index and factor
-            self.left_indices = [y_index, x_index] # (2, h x w)
-            self.right_indices = [yy_index, xx_index] # (2, h x w)
-            self.alphas = [y_alpha, x_alpha] # (2, h x w)
+            self.interp_indices = [y_index, yy_index, x_index, xx_index] # (4, h x w)
+            self.alphas = [y_alpha, 1. - y_alpha, x_alpha, 1. - x_alpha] # (4, h x w)
 
             # Spatial convolutional dimension
             self.dim = 2
@@ -129,9 +128,8 @@ class HighDimFilter:
             self.splat_coords = tf.reshape(self.splat_coords, [-1, ]) # (h x w, )
 
             # Bilateral interpolation index and factor
-            self.left_indices = [y_index, x_index, r_index, g_index, b_index] # (5, h x w)
-            self.right_indices = [yy_index, xx_index, rr_index, gg_index, bb_index] # (5, h x w)
-            self.alphas = [y_alpha, x_alpha, r_alpha, g_alpha, b_alpha] # (5, h x w)
+            self.interp_indices = [y_index, yy_index, x_index, xx_index, r_index, rr_index, g_index, gg_index, b_index, bb_index] # (10, h x w)
+            self.alphas = [y_alpha, 1. - y_alpha, x_alpha, 1. - x_alpha, r_alpha, 1. - r_alpha, g_alpha, 1. - g_alpha, b_alpha, 1. - b_alpha] # (10, h x w)
 
             # Bilateral convolutional dimension
             self.dim = 5
@@ -152,7 +150,7 @@ class HighDimFilter:
         del buffer
         return data
 
-    def loop_Nlinear_interpolation(self, ) -> tf.Tensor:
+    def loop_Nlinear_interpolation(self, data: tf.Tensor) -> tf.Tensor:
         # Method of coordinate transformation
         def set_coord_transform():
             def bilateral_coord_transform(y_idx, x_idx, r_idx, g_idx, b_idx):
@@ -173,3 +171,14 @@ class HighDimFilter:
         offset = tf.range(self.dim) * 2
         
         for perm in it.product(range(2), repeat=self.dim):
+            alpha_prod = tf.gather(self.alphas, tf.constant(perm) + offset)
+            idx = tf.gather(self.interp_indices, tf.constant(perm) + offset)
+
+            data_slice = tf.gather(tf.reshape(data, [-1, ]), coord_transform(*idx))
+            interpolation = interpolation + tf.math.reduce_prod(alpha_prod, axis=0) * data_slice
+
+        return interpolation
+
+    def compute(self, inp: tf.Tensor) -> tf.Tensor:
+        _, _, n_channels = inp.shape[:3]
+        # TODO: flatten inp before splat
