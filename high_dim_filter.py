@@ -44,11 +44,11 @@ class HighDimFilter:
             tf.assert_equal(features.ndim, 3)
 
         # Height and width of data grid, scala, dtype int
-        self.small_height = int((self.height - 1) / self.space_sigma) + 1 + 2 * self.padding_xy
-        self.small_width = int((self.width - 1) / self.space_sigma) + 1 + 2 * self.padding_xy
+        self.small_height = tf.cast(tf.cast(self.height - 1, dtype=tf.float32) / self.space_sigma, dtype=tf.int32) + 1 + 2 * self.padding_xy
+        self.small_width = tf.cast(tf.cast(self.width - 1, dtype=tf.float32) / self.space_sigma, dtype=tf.int32) + 1 + 2 * self.padding_xy
 
         # Space coordinates, shape (h, w), dtype int
-        yy, xx = tf.meshgrid(tf.range(self.height), tf.range(self.width)) # (h, w)
+        yy, xx = tf.meshgrid(tf.range(self.height), tf.range(self.width), indexing='ij') # (h, w)
         yy, xx = tf.cast(yy, dtype=tf.float32), tf.cast(xx, dtype=tf.float32)
         # Spatial coordinates of splat, shape (h, w)
         splat_yy = tf.cast(yy / self.space_sigma + .5, tf.int32) + self.padding_xy
