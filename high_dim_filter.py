@@ -40,16 +40,16 @@ class HighDimFilter:
     def init(self, features: tf.Tensor=None) -> None:
         # Initialize a spatial high-dim filter if `features` is None; otherwise a bilateral one and `features` should be three-channel and channel-last
         if self.is_bilateral:
-            tf.assert_equal(tf.shape(features)[-1], 3)
-            tf.assert_equal(features.ndim, 3)
+            tf.debugging.assert_equal(tf.shape(features)[-1], 3)
+            tf.debugging.assert_equal(tf.rank(features), 3)
 
         # Height and width of data grid, scala, dtype int
-        self.small_height = tf.cast(tf.cast(self.height - 1, dtype=tf.float32) / self.space_sigma, dtype=tf.int32) + 1 + 2 * self.padding_xy
-        self.small_width = tf.cast(tf.cast(self.width - 1, dtype=tf.float32) / self.space_sigma, dtype=tf.int32) + 1 + 2 * self.padding_xy
+        self.small_height = tf.cast(tf.cast(self.height - 1, tf.float32) / self.space_sigma, dtype=tf.int32) + 1 + 2 * self.padding_xy
+        self.small_width = tf.cast(tf.cast(self.width - 1, tf.float32) / self.space_sigma, dtype=tf.int32) + 1 + 2 * self.padding_xy
 
         # Space coordinates, shape (h, w), dtype int
         yy, xx = tf.meshgrid(tf.range(self.height), tf.range(self.width), indexing='ij') # (h, w)
-        yy, xx = tf.cast(yy, dtype=tf.float32), tf.cast(xx, dtype=tf.float32)
+        yy, xx = tf.cast(yy, tf.float32), tf.cast(xx, tf.float32)
         # Spatial coordinates of splat, shape (h, w)
         splat_yy = tf.cast(yy / self.space_sigma + .5, tf.int32) + self.padding_xy
         splat_xx = tf.cast(xx / self.space_sigma + .5, tf.int32) + self.padding_xy
@@ -68,8 +68,8 @@ class HighDimFilter:
         x_index, xx_index = get_both_indices(self.small_width, slice_xx) # (h, w)
 
         # Spatial interpolation factor of slice
-        y_alpha = tf.reshape(slice_yy - tf.cast(y_index, dtype=tf.float32), [-1, ]) # (h x w, )
-        x_alpha = tf.reshape(slice_xx - tf.cast(x_index, dtype=tf.float32), [-1, ]) # (h x w, )
+        y_alpha = tf.reshape(slice_yy - tf.cast(y_index, tf.float32), [-1, ]) # (h x w, )
+        x_alpha = tf.reshape(slice_xx - tf.cast(x_index, tf.float32), [-1, ]) # (h x w, )
 
         if not self.is_bilateral:
             # Shape of spatial data grid
@@ -96,9 +96,9 @@ class HighDimFilter:
             rr, gg, bb = r - r_min, g - g_min, b - b_min
 
             # Depths of data grid
-            self.small_rdepth = int(r_delta / self.range_sigma) + 1 + 2 * self.padding_z
-            self.small_gdepth = int(g_delta / self.range_sigma) + 1 + 2 * self.padding_z
-            self.small_bdepth = int(b_delta / self.range_sigma) + 1 + 2 * self.padding_z
+            self.small_rdepth = tf.cast(r_delta / self.range_sigma, tf.int32) + 1 + 2 * self.padding_z
+            self.small_gdepth = tf.cast(g_delta / self.range_sigma, tf.int32) + 1 + 2 * self.padding_z
+            self.small_bdepth = tf.cast(b_delta / self.range_sigma, tf.int32) + 1 + 2 * self.padding_z
 
             # Range coordinates, shape (h, w)
             splat_rr = tf.cast(rr / self.range_sigma + .5, tf.int32) + self.padding_z
@@ -116,9 +116,9 @@ class HighDimFilter:
             b_index, bb_index = get_both_indices(self.small_bdepth, slice_bb) # (h, w)
 
             # Interpolation factors
-            r_alpha = tf.reshape(slice_rr - tf.cast(r_index, dtype=tf.float32), [-1, ]) # (h x w, ) 
-            g_alpha = tf.reshape(slice_gg - tf.cast(g_index, dtype=tf.float32), [-1, ]) # (h x w, )
-            b_alpha = tf.reshape(slice_bb - tf.cast(b_index, dtype=tf.float32), [-1, ]) # (h x w, )
+            r_alpha = tf.reshape(slice_rr - tf.cast(r_index, tf.float32), [-1, ]) # (h x w, ) 
+            g_alpha = tf.reshape(slice_gg - tf.cast(g_index, tf.float32), [-1, ]) # (h x w, )
+            b_alpha = tf.reshape(slice_bb - tf.cast(b_index, tf.float32), [-1, ]) # (h x w, )
 
             # Shape of bilateral data grid
             self.data_shape = [self.small_height, self.small_width, self.small_rdepth, self.small_gdepth, self.small_bdepth]
@@ -136,12 +136,12 @@ class HighDimFilter:
 
     def convn(self, data, n_iter: int=2) -> tf.Tensor:
         buffer = tf.zeros_like(data)
-        perm = list(range(1, data.ndim)) + [0] # [1, ..., ndim - 1, 0]
+        perm = list(range(1, self.dim)) + [0] # [1, ..., ndim - 1, 0]
 
         for _ in range(n_iter):
             buffer, data = data, buffer
 
-            for dim in range(data.ndim):
+            for dim in range(self.dim):
                 newdata = (buffer[:-2] + buffer[2:] + 2 * buffer[1:-1]) / 4.
                 data = tf.concat([data[:1], newdata, data[-1:]], axis=0)
                 data = tf.transpose(data, perm=perm)
@@ -167,7 +167,7 @@ class HighDimFilter:
         coord_transform = set_coord_transform()
 
         # Initialize interpolation
-        interpolation = tf.zeros(shape=[self.height * self.width, ], dtype=tf.float32)
+        interpolation = tf.zeros([self.height * self.width, ], dtype=tf.float32)
         offset = tf.range(self.dim) * 2
         
         for perm in it.product(range(2), repeat=self.dim):
@@ -181,7 +181,7 @@ class HighDimFilter:
 
     def compute(self, inp: tf.Tensor) -> tf.Tensor:
         # `inp` should be 3-dim
-        tf.assert_equal(inp.ndim, 3)
+        tf.debugging.assert_equal(tf.rank(inp), 3)
         # Channel-last to channel-first because tf.map_fn
         inp_transpose = tf.transpose(inp, (2, 0, 1))
 
@@ -190,14 +190,14 @@ class HighDimFilter:
             inp_flat = tf.reshape(inp_ch, [-1, ]) # (h x w)
             # ==== Splat ====
             data_flat = tf.math.bincount(self.splat_coords, weights=inp_flat, minlength=tf.math.reduce_prod(self.data_shape), maxlength=tf.math.reduce_prod(self.data_shape), dtype=tf.float32)
-            data = tf.reshape(data_flat, shape=self.data_shape)
+            data = tf.reshape(data_flat, self.data_shape)
             
             # ==== Blur ====
             data = self.convn(data)
 
             # ==== Slice ====
             interpolation = self.loop_Nlinear_interpolation(data)
-            interpolation = tf.reshape(interpolation, shape=(self.height, self.width))
+            interpolation = tf.reshape(interpolation, [self.height, self.width])
 
             return interpolation
 
