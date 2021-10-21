@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from high_dim_filter import HighDimFilter
+# from high_dim_filter_factory import SpatialHighDimFilter, BilateralHighDimFilter
+from bilateral_filter_factory import bilateral_high_dim_filter
+from spatial_filter_factory import spatial_high_dim_filter
 from PIL import Image
 import matplotlib.pyplot as plt
 import cv2
@@ -60,12 +62,10 @@ def _diagonal_compatibility(shape):
 def _potts_compatibility(shape):
     return -1 * _diagonal_compatibility(shape)
 
-# def _softmax(x):
-#     e_x = np.exp(x - x.max(axis=-1, keepdims=True))
-#     return e_x / e_x.sum(axis=-1, keepdims=True)
 
 # unary first
-def inference(unary, image, num_classes, theta_alpha, theta_beta, theta_gamma, spatial_compat, bilateral_compat, num_iterations):
+@tf.function
+def inference(unary, image, height, width, num_classes, theta_alpha, theta_beta, theta_gamma, spatial_compat, bilateral_compat, num_iterations):
     # Check if data scale of `image` is [0, 1]
     tf.debugging.assert_less_equal(tf.reduce_max(image), 1.)
     tf.debugging.assert_greater_equal(tf.reduce_min(image), 0.)
@@ -75,25 +75,15 @@ def inference(unary, image, num_classes, theta_alpha, theta_beta, theta_gamma, s
     # Check if theta_beta is float and < 1
     tf.debugging.assert_less_equal(theta_beta, 1.)
 
-    height, width, _ = tf.shape(unary)[:3]
-
     spatial_weights = spatial_compat * _diagonal_compatibility((num_classes, num_classes))
     bilateral_weights = bilateral_compat * _diagonal_compatibility((num_classes, num_classes))
     compatibility_matrix = _potts_compatibility((num_classes, num_classes))
 
     all_ones = tf.ones((height, width, 1), dtype=tf.float32)
 
-    # Spatial and bilateral high-dim filters
-    spatial_high_dim_filter = HighDimFilter(is_bilateral=False, height=height, width=width, space_sigma=theta_gamma)
-    bilateral_high_dim_filter = HighDimFilter(is_bilateral=True, height=height, width=width, space_sigma=theta_alpha, range_sigma=theta_beta)
-
-    # Initialize high-dim filters
-    spatial_high_dim_filter.init()
-    bilateral_high_dim_filter.init(image)
-
     # Compute symmetric weight
-    spatial_norm_vals = spatial_high_dim_filter.compute(all_ones)
-    bilateral_norm_vals = bilateral_high_dim_filter.compute(all_ones)
+    spatial_norm_vals = spatial_high_dim_filter(all_ones, height, width, space_sigma=theta_gamma)
+    bilateral_norm_vals = bilateral_high_dim_filter(all_ones, image, height, width, space_sigma=theta_alpha, range_sigma=theta_beta)
     spatial_norm_vals = 1. / (spatial_norm_vals ** .5 + 1e-20)
     bilateral_norm_vals = 1. / (bilateral_norm_vals ** .5 + 1e-20)
 
@@ -104,11 +94,11 @@ def inference(unary, image, num_classes, theta_alpha, theta_beta, theta_gamma, s
         tmp1 = -unary
 
         # Symmetric normalization and spatial message passing
-        spatial_out = spatial_high_dim_filter.compute(Q * spatial_norm_vals)
+        spatial_out = spatial_high_dim_filter(Q * spatial_norm_vals, height, width, space_sigma=theta_gamma)
         spatial_out *= spatial_norm_vals
 
         # Symmetric normalization and bilateral message passing
-        bilateral_out = bilateral_high_dim_filter.compute(Q * bilateral_norm_vals)
+        bilateral_out = bilateral_high_dim_filter(Q * bilateral_norm_vals, image, height, width, space_sigma=theta_alpha, range_sigma=theta_beta)
         bilateral_out *= bilateral_norm_vals
 
         # Message passing
@@ -158,7 +148,8 @@ if __name__ == "__main__":
     unary = np.transpose(unary, (1, 2, 0))
     print(unary.shape, img.shape)
 
-    pred = inference(unary.astype(np.float32), (img / 255.).astype(np.float32), n_labels, theta_alpha=80., theta_beta=.0625, theta_gamma=3., spatial_compat=3., bilateral_compat=10., num_iterations=10)
+    pred = inference(tf.constant(unary.astype(np.float32)), tf.constant((img / 255.).astype(np.float32)), height, width, n_labels, theta_alpha=80., theta_beta=.0625, theta_gamma=3., spatial_compat=3., bilateral_compat=10., num_iterations=10)
+    pred = pred.numpy()
     
     MAP = np.argmax(pred, axis=-1)
     plt.imshow(MAP)
